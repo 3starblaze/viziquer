@@ -301,7 +301,6 @@ export function GroupedResultsPaginated() {
         return executeUnlimited(newQuery);
       },
       baseQuery: savedQuery,
-      counterLimit: 100_000,
       rawRowLimit: 100_000,
       idVars,
       pagination,
