@@ -69,11 +69,11 @@ async function getPropertySuggestions(selectedType, propertyType, limit) {
 }
 
 /**
- * @return ComplexPropertySelection
+ * @return {ComplexPropertySelection}
  */
 function makeDefaultSelection() {
     return {
-        rdfType: "",
+        rdfType: { names: [] },
         dataProps: [],
         objectProps: [],
     };
@@ -129,7 +129,7 @@ function useSyncWithDiagram(setSelection) {
      * @param {{[key: string]: string}} prefixes
      * @param {Awaited<ReturnType<createVQ_Element>>} vqItem
      *
-     * @return ComplexPropertySelection
+     * @return {Promise<ComplexPropertySelection>}
      */
     async function topPropsToSelection(prefixes, vqItem) {
         if (!vqItem) return makeDefaultSelection();
@@ -141,20 +141,25 @@ function useSyncWithDiagram(setSelection) {
 
         const [dataProps, objectProps] = await Promise.all([
             getPropertySuggestions(resolvedClass, "Data", dataLimit)
-                .then((res) => res.map(({ value }) => ({ name: value }))),
+                .then((res) => res.map(({ value }) => {
+                    /** @type {ComplexPropertySelection["dataProps"][number]} */
+                    const prop = ({ names: [value], mandatory: false });
+                    return prop;
+                })),
             getPropertySuggestions(resolvedClass, "Object", objLimit)
-                .then((res) => res.map(({ value }) => ({
-                    name: value,
-                    selection: {
-                        rdfType: "",
-                        dataProps: [],
-                        objectProps: [],
-                    },
-                }))),
+                .then((res) => res.map(({ value }) => {
+                    /** @type {ComplexPropertySelection["objectProps"][number]} */
+                    const prop = {
+                        names: [value],
+                        selection: makeDefaultSelection(),
+                        mandatory: false,
+                    };
+                    return prop;
+                })),
         ]);
 
         return {
-            rdfType: resolvedClass,
+            rdfType: { names: [resolvedClass] },
             dataProps,
             objectProps,
         };
@@ -211,7 +216,9 @@ function useSyncWithDiagram(setSelection) {
 
         if (!linkName) throw new Error("link name could not be found");
 
-        const tmpReplaceIndex = startSelection.objectProps.findIndex((item) => item.name === linkName);
+        const tmpReplaceIndex = startSelection
+              .objectProps
+              .findIndex((item) => item.names.includes(linkName));
         // NOTE: Correcting the index to make slicing by index simpler
         const replaceIndex = (tmpReplaceIndex === -1)
               ? startSelection.objectProps.length
@@ -223,7 +230,8 @@ function useSyncWithDiagram(setSelection) {
             objectProps: [
                 ...startSelection.objectProps.slice(0, replaceIndex),
                 {
-                    name: linkName,
+                    mandatory: false,
+                    names: [linkName],
                     selection: endSelection,
                 },
                 ...startSelection.objectProps.slice(replaceIndex + 1),
@@ -256,14 +264,17 @@ function useSyncWithDiagram(setSelection) {
         /** @type {{label: string, value: string}[]} */
         const newProperties = fields.flatMap(({ exp }) => {
             const maybeValue = resolvePrefixedName(prefixes, exp);
-            return maybeValue ? ({ value: maybeValue, label: exp }) : [];
+            return maybeValue ? ({ value: maybeValue, label: exp,  }) : [];
         });
 
         const newClass = resolvePrefixedName(prefixes, prefixedClass);
 
         return {
-            rdfType: newClass || "",
-            dataProps: newProperties.map(({ value }) => ({ name: value })),
+            rdfType: { names: [newClass || ""] },
+            dataProps: newProperties.map(({ value }) => ({
+                names: [value],
+                mandatory: false,
+            })),
             objectProps: [],
         };
     }
@@ -309,13 +320,7 @@ async function executeFromSelection(selection) {
 }
 
 export function QueryGeneratorView() {
-    const [selection, setSelection] = useState(
-        /** @type {ComplexPropertySelection} */ ({
-            rdfType: "",
-            dataProps: [],
-            objectProps: [],
-        })
-    );
+    const [selection, setSelection] = useState(makeDefaultSelection);
 
     useSyncWithDiagram(setSelection);
 
@@ -363,13 +368,26 @@ export function QueryGeneratorView() {
             {
                 selection,
                 onSelectionChange: setSelection,
-                dataPropFetcher: (rdfType) => getPropertySuggestions(rdfType, "Data"),
-                objectPropFetcher: (rdfType) => getPropertySuggestions(rdfType, "Object"),
-                rdfTypeFetcher: () => getClasses()
-                    .then((res) => (res || []).map(({ iri, prefixedName }) => ({
-                        label: `${prefixedName}`,
-                        value: iri,
-                    }))),
+                suggestionsFetcher: async ({ target, selection }) => {
+                    if (target.kind === "rdfType") {
+                        return getClasses()
+                            .then((res) => (res || []).map(({ iri, prefixedName }) => ({
+                                label: `${prefixedName}`,
+                                value: iri,
+                            })));
+                    }
+                    if (target.kind === "dataProp") {
+                        // TODO: Handle union
+                        const rdfType = selection.rdfType.names[0];
+                        return getPropertySuggestions(rdfType, "Data");
+                    }
+                    if (target.kind === "objectProp") {
+                        // TODO: Handle union
+                        const rdfType = selection.rdfType.names[0];
+                        return getPropertySuggestions(rdfType, "Object");
+                    }
+                    return [];
+                },
             },
         ),
         createElement(
