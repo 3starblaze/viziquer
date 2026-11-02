@@ -134,10 +134,36 @@ function useSyncWithDiagram(setSelection) {
     async function topPropsToSelection(prefixes, vqItem) {
         if (!vqItem) return makeDefaultSelection();
 
-        const prefixedClass = await vqItem.getName().then(itemNameToPrefixedName);
-        const resolvedClass = resolvePrefixedName(prefixes, prefixedClass);
+        /**
+         * @param {string} itemName
+         * @return {string | null}
+         */
+        function processItemName(itemName) {
+            return resolvePrefixedName(prefixes, itemNameToPrefixedName(itemName))
+        }
 
-        if (!resolvedClass) return makeDefaultSelection();
+        const [resolvedClass, resolvedTypes] = await Promise.all([
+            vqItem.getName().then(processItemName),
+            vqItem
+              .getClassList()
+              .then((it) => {
+                  if (typeof it !== "string") {
+                      throw new Error(`expected the value to be string: ${it}`);
+                  }
+                  return it
+                    .split("\n")
+                    .map((itemName) => {
+                        const res =  processItemName(itemName);
+                        return res;
+                    })
+                    .filter((maybeName) => maybeName !== null);
+              })
+        ]);
+
+        if (!resolvedClass) return {
+            ...makeDefaultSelection(),
+            rdfType: { names: resolvedTypes },
+        };
 
         const [dataProps, objectProps] = await Promise.all([
             getPropertySuggestions(resolvedClass, "Data", dataLimit)
@@ -159,7 +185,7 @@ function useSyncWithDiagram(setSelection) {
         ]);
 
         return {
-            rdfType: { names: [resolvedClass] },
+            rdfType: { names: resolvedTypes },
             dataProps,
             objectProps,
         };
